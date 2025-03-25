@@ -1,33 +1,23 @@
-const clientId = SPOTIFY_CLIENT_ID;
-const clientSecret = SPOTIFY_CLIENT_SECRET;
-const refreshToken = SPOTIFY_REFRESH_TOKEN;
+import fetch from "node-fetch";
 
-
-function addCorsHeaders(response) {
-  response.headers.set('Access-Control-Allow-Origin', '*'); 
-  response.headers.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  response.headers.set('Access-Control-Allow-Headers', 'Content-Type');
-  response.headers.set('Access-Control-Allow-Credentials', 'true'); 
-  
-  return response;
-}
+const SPOTIFY_CLIENT_ID = process.env.SPOTIFY_CLIENT_ID;
+const SPOTIFY_CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
+const SPOTIFY_REFRESH_TOKEN = process.env.SPOTIFY_REFRESH_TOKEN;
 
 async function getAccessToken() {
-  const response = await fetch('https://accounts.spotify.com/api/token', {
-    method: 'POST',
+  const response = await fetch("https://accounts.spotify.com/api/token", {
+    method: "POST",
     headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      'Authorization': 'Basic ' + btoa(`${clientId}:${clientSecret}`)
+      "Content-Type": "application/x-www-form-urlencoded",
+      Authorization: "Basic " + Buffer.from(`${SPOTIFY_CLIENT_ID}:${SPOTIFY_CLIENT_SECRET}`).toString("base64"),
     },
     body: new URLSearchParams({
-      grant_type: 'refresh_token',
-      refresh_token: refreshToken
-    })
+      grant_type: "refresh_token",
+      refresh_token: SPOTIFY_REFRESH_TOKEN,
+    }),
   });
 
-  if (!response.ok) {
-    throw new Error('Failed to refresh access token');
-  }
+  if (!response.ok) throw new Error("Failed to refresh access token");
 
   const data = await response.json();
   return data.access_token;
@@ -35,66 +25,44 @@ async function getAccessToken() {
 
 async function fetchSpotifyData(url, token) {
   const response = await fetch(url, {
-    headers: {
-      'Authorization': `Bearer ${token}`
-    }
+    headers: { Authorization: `Bearer ${token}` },
   });
 
-  if (!response.ok) {
-    throw new Error(`Spotify API error: ${response.statusText}`);
-  }
+  if (!response.ok) throw new Error(`Spotify API error: ${response.statusText}`);
 
   return response.json();
 }
 
-async function handleOptionsRequest() {
-  return new Response(null, {
-    headers: {
-      'Access-Control-Allow-Origin': '*',  // or specify your domain
-      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
-      'Access-Control-Allow-Credentials': 'true',
-      'Access-Control-Max-Age': '86400', // Cache for 24 hours
-    }
-  });
-}
-
-async function handleRequest(request) {
-  const url = new URL(request.url);
-  const path = url.pathname;
-
-  // Handle the OPTIONS preflight request
-  if (request.method === 'OPTIONS') {
-    return handleOptionsRequest();
-  }
-
+export async function handler(event) {
   try {
+    const path = event.rawPath;
     const token = await getAccessToken();
 
-    let response;
-    if (path === '/spotify/currently-playing') {
-      const data = await fetchSpotifyData('https://api.spotify.com/v1/me/player/currently-playing', token);
-      response = new Response(JSON.stringify(data), { headers: { 'Content-Type': 'application/json' } });
-    } else if (path === '/spotify/recently-liked') {
-      const data = await fetchSpotifyData('https://api.spotify.com/v1/me/tracks?limit=5', token);
-      response = new Response(JSON.stringify(data.items), { headers: { 'Content-Type': 'application/json' } });
+    let responseData;
+    if (path === "/spotify/currently-playing") {
+      responseData = await fetchSpotifyData("https://api.spotify.com/v1/me/player/currently-playing", token);
+    } else if (path === "/spotify/recently-liked") {
+      const data = await fetchSpotifyData("https://api.spotify.com/v1/me/tracks?limit=5", token);
+      responseData = data.items;
     } else {
-      return new Response('Not Found', { status: 404 });
+      return { statusCode: 404, body: JSON.stringify({ error: "Not Found" }) };
     }
 
-   
-    return addCorsHeaders(response);
+    return {
+      statusCode: 200,
+      headers: {
+        "Content-Type": "application/json",
+        "Access-Control-Allow-Origin": "*", 
+        "Access-Control-Allow-Methods": "GET",
+      },
+      body: JSON.stringify(responseData),
+    };
   } catch (error) {
-    const errorResponse = new Response(JSON.stringify({ error: error.message }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' }
-    });
-
-  
-    return addCorsHeaders(errorResponse);
+    console.error("Error:", error);
+    return {
+      statusCode: 500,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ error: error.message }),
+    };
   }
 }
-
-addEventListener('fetch', event => {
-  event.respondWith(handleRequest(event.request));
-});
